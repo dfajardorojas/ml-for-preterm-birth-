@@ -24,6 +24,7 @@ from datetime import datetime
 
 from sklearn.svm import SVR
 from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import GridSearchCV
 from sklearn.impute import KNNImputer
@@ -38,7 +39,7 @@ from sklearn.metrics import r2_score
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import mean_absolute_error
 from sklearn import svm, datasets
-from sklearn.metrics import plot_confusion_matrix
+#from sklearn.metrics import plot_confusion_matrix
 from sklearn.svm import SVC
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import cross_val_score
@@ -88,6 +89,52 @@ def load_medical_data(file_name):
 
 
 raw_data = load_medical_data(DATA_FILE_LOCATION)
+
+### Fill all _gu_ features with values from _anom_ features 
+### if subjects are same patient scanned at different times 
+### and subsequent scans have them missing but first doesn't.
+def fill_missing_gu_w_anom_repeated_patient(dataframe):
+    dataframe = dataframe.copy()
+    list_gu_features = ['tag_gu_ga', 'tag_gu_hc', 'tag_gu_ac', 'tag_gu_bpd', 'tag_gu_fl', 'tag_gu_pi_left', 'tag_gu_pi_right', 'tag_gu_loc', 'tag_gu_cord', 'tag_gu_cord_ins']
+    list_anom_features = ['tag_anom_ga', 'tag_anom_hc', 'tag_anom_ac', 'tag_anom_bpd', 'tag_anom_fl', 'tag_anom_pi_left', 'tag_anom_pi_right', 'tag_anom_loc', 'tag_anom_cord', 'tag_anom_cord_ins']
+
+    list_first_scans = [4000015, 1000020, 1000022, 1000067, 1000082, 1000092, 1000115, 1000119, 1000120, 1000127, 1000141, 1000147,
+                        1000158, 1000160, 1000167, 1000179, 1000181, 1000183, 1000195, 1000210, 1000213, 1000236,
+                        10000002, 10000002, 10000019, 10000041, 10000041, 10000044, 10000048, 10000049, 10000052, 10000060,
+                        10000062, 10000063, 10000066, 10000077, 10000078, 10000086, 10000100, 10000100]
+
+    #list_first_scans = [str(i) for i in list_first_scans]
+
+    list_subsequent_scans = [4001502, 1002002, 1002202, 1006702, 1008202, 1009202, 1011502, 1011902, 1012002, 1012702, 1014102, 1014702,
+                            1015802, 1016002, 1016702, 1017902, 1018102, 1018302, 1019502, 1021002, 1021302, 1023602, 10000202, 10000203,
+                            10001902, 10004102, 10004103, 10004402, 10004802, 10004902, 10005202, 10006002, 10006202, 10006302, 10006602,
+                            10007702, 10007802, 10008602, 10010002, 10010003]
+
+    #list_subsequent_scans = [str(i) for i in list_subsequent_scans]
+
+    for i, gu_feature in enumerate(list_gu_features):
+        for j, subject in enumerate(list_subsequent_scans):
+            if (dataframe[dataframe['tag_complete_id']==subject][gu_feature].item() == -1) and (dataframe[dataframe['tag_complete_id']==list_first_scans[j]][gu_feature].item() != -1) :
+                dataframe.loc[dataframe['tag_complete_id']==subject, gu_feature] = dataframe[dataframe['tag_complete_id']==list_first_scans[j]][gu_feature].item()
+
+    return dataframe
+
+####Fill all _gu_ features with values from _anom_ features 
+### if difference between scans less than 3 weeks and said feature is missing 
+
+
+def fill_missing_gu_w_anom(dataframe):
+    dataframe = dataframe.copy()
+    list_gu_features = ['tag_gu_ga', 'tag_gu_hc', 'tag_gu_ac', 'tag_gu_bpd', 'tag_gu_fl', 'tag_gu_pi_left', 'tag_gu_pi_right', 'tag_gu_loc', 'tag_gu_cord', 'tag_gu_cord_ins']
+    list_anom_features = ['tag_anom_ga', 'tag_anom_hc', 'tag_anom_ac', 'tag_anom_bpd', 'tag_anom_fl', 'tag_anom_pi_left', 'tag_anom_pi_right', 'tag_anom_loc', 'tag_anom_cord', 'tag_anom_cord_ins']
+
+    for i, gu_feature in enumerate(list_gu_features):
+        dataframe[gu_feature] = np.where((dataframe[gu_feature] == -1) & (dataframe['tag_anom_ga'] != -1) & (abs(dataframe['tag_ga'] - dataframe['tag_anom_ga'])<=3), dataframe[list_anom_features[i]], dataframe[gu_feature])
+
+    return dataframe
+
+
+
 
 
 def replace_missing_values(dataframe):
@@ -193,12 +240,14 @@ def add_35_and_37_category(dataframe):
 
 
 
-_data = replace_missing_values(raw_data)
+_data = fill_missing_gu_w_anom_repeated_patient(raw_data)
+_data = fill_missing_gu_w_anom(_data)
+_data = replace_missing_values(_data)
+_data = remove_rows_no_3T(_data)
 _data = remove_rows_without_outcome(_data)
 _data = remove_cols_with_no_data(_data)
 _data = divide_to_categories(_data)
 _data = add_35_and_37_category(_data)
-_data = remove_rows_no_3T(_data)
 _data = remove_rows_37(_data)
 
 
@@ -257,50 +306,31 @@ NOT_ENOUGH_DATA_FEATURE_NAMES = ['tag_vol_0','tag_vol_1', 'tag_vol_2', 'tag_vol_
 #Threshold of <50% missing data, obtained from get_missing_data_info() function below
 ALL_Z_SCORE_FEATURE_NAMES = ['plac_t2s_mean',
                              'plac_t2s_vol',
+                             'plac_t2s_rr',
                              'plac_t2s_lacu',
                              'plac_t2s_skew',
                              'plac_t2s_kurt',
+                             'tag_cervix_length',
                              'brain_t2s_mean',
                              'brain_t2s_vol',
+                             'brain_t2s_rr',
                              'brain_t2s_lacu',
                              'brain_t2s_skew',
-                             'brain_t2s_kurt',
-                             'tag_cervix_length',
-                             'tag_vol_body',
-                             'tag_cptr',
-                             'eCSF_L',
-                             'eCSF_R',
-                             'Cortex_L',
-                             'Cortex_R',
-                             'WM_L',
-                             'WM_R',
-                             'Lat_ventricle_L',
-                             'Lat_ventricle_R',
-                             'CSP',
-                             'Brainstem',
-                             'Cerebellum_L',
-                             'Cerebellum_R',
-                             'Vermis',
-                             'Lentiform_L',
-                             'Lentiform_R',
-                             'Thalamus_L',
-                             'Thalamus_R',
-                             'Third_ventricle',
-                             'tag_vol_t2w_complete']
+                             'brain_t2s_kurt'
+                             ]
 
 
 ALL_Z_SCORE_FEATURE_NAMES_GU = ['tag_gu_hc',
                                 'tag_gu_ac',
                                 'tag_gu_bpd',
-                                'tag_gu_fl',
-                                'tag_gu_pi',
-                                'tag_gu_efw',
-                                'tag_gu_edf']
+                                'tag_gu_fl'
+                                ]
 
-ALL_Z_SCORE_FEATURE_NAMES_ANOM = ['tag_anom_ac',
-                             'tag_anom_bpd',
-                             'tag_anom_fl',
-                             'tag_anom_hc']
+ALL_Z_SCORE_FEATURE_NAMES_ANOM = ['tag_anom_hc',
+                                  'tag_anom_ac',
+                                  'tag_anom_bpd',
+                                  'tag_anom_fl'
+                                  ]
 
 
 ALL_REGULAR_FEATURE_NAMES = ['tag_age',
@@ -311,14 +341,17 @@ ALL_REGULAR_FEATURE_NAMES = ['tag_age',
                              'tag_diabetes',
                              'tag_anom_loc',
                              'tag_anom_cord',
+                             'tag_gu_loc',
                              'tag_ivf',
                              'tag_smok',
                              'tag_prev_ptb',
-                             'tag_gu_efw_cen',
-                             'tag_gu_loc',
-                             'tag_bp_sys',
-                             'tag_bp_dias',
-                             'tag_bp_hr']
+                             'tag_bmi_scan',
+                             'tag_cptr',
+                             'plac_m_dist_mean',
+                             'plac_m_dist_stdev',
+                             'plac_m_uni',
+                             'plac_m_max_thick'
+                             ]
 # ALL_FEATURE_NAMES =  convert_to_zscore_column_names(ALL_Z_SCORE_FEATURE_NAMES) + ALL_REGULAR_FEATURE_NAMES
 ALL_FEATURE_NAMES =  convert_to_zscore_column_names(ALL_Z_SCORE_FEATURE_NAMES) + convert_to_zscore_column_names_gu(ALL_Z_SCORE_FEATURE_NAMES_GU) + convert_to_zscore_column_names_anom(ALL_Z_SCORE_FEATURE_NAMES_ANOM) + ALL_REGULAR_FEATURE_NAMES
 
@@ -604,7 +637,8 @@ def perform_imputation(dataframe):
     columns = dataframe.columns
     all_data = dataframe.values
     # Get indices of columns that should be taken for imputation
-
+    
+    
     if "plac_t2s_kurt_z_score" in columns:
         plac_t2s_kurt_z_score_index = columns.get_loc("plac_t2s_kurt_z_score")
     else:
@@ -670,175 +704,44 @@ def perform_imputation(dataframe):
     else:
         tag_cervix_length_z_score_index = -1
         print('tag_cervix_length_z_score NOT AVAILABLE')
-
-    if "tag_vol_body_z_score" in columns:
-        tag_vol_body_z_score_index = columns.get_loc("tag_vol_body_z_score")
+           
+                
+    if "plac_t2s_rr_z_score" in columns:
+        plac_t2s_rr_z_score_index = columns.get_loc("plac_t2s_rr_z_score")
     else:
-        tag_vol_body_z_score_index = -1
-        print('tag_vol_body_z_score NOT AVAILABLE')
-
-    if "tag_cptr_z_score" in columns:
-        tag_cptr_z_score_index = columns.get_loc("tag_cptr_z_score")
+        plac_t2s_rr_z_score_index = -1
+        print('plac_t2s_rr_z_score NOT AVAILABLE')
+        
+    if "plac_m_dist_mean" in columns:
+        plac_m_dist_mean_index = columns.get_loc("plac_m_dist_mean")
     else:
-        tag_cptr_z_score_index = -1
-        print('tag_cptr_z_score NOT AVAILABLE')
-
-    if "eCSF_L_z_score" in columns:
-        eCSF_L_z_score_index = columns.get_loc("eCSF_L_z_score")
+        plac_m_dist_mean_index = -1
+        print('plac_m_dist_mean NOT AVAILABLE')
+        
+    if "plac_m_dist_stdev" in columns:
+        plac_m_dist_stdev_index = columns.get_loc("plac_m_dist_stdev")
     else:
-        eCSF_L_z_score_index = -1
-        print('eCSF_L_z_score NOT AVAILABLE')
-
-    if "eCSF_R_z_score" in columns:
-        eCSF_R_z_score_index = columns.get_loc("eCSF_R_z_score")
+        plac_m_dist_stdev_index = -1
+        print('plac_m_dist_stdev NOT AVAILABLE')
+        
+    if "plac_m_uni" in columns:
+        plac_m_uni_index = columns.get_loc("plac_m_uni")
     else:
-        eCSF_R_z_score_index = -1
-        print('eCSF_R_z_score NOT AVAILABLE')
-
-    if "Cortex_L_z_score" in columns:
-        Cortex_L_z_score_index = columns.get_loc("Cortex_L_z_score")
+        plac_m_uni_index = -1
+        print('plac_m_uni NOT AVAILABLE')
+               
+    if "plac_m_max_thick" in columns:
+        plac_m_max_thick_index = columns.get_loc("plac_m_max_thick")
     else:
-        Cortex_L_z_score_index = -1
-        print('Cortex_L_z_score NOT AVAILABLE')
-
-    if "Cortex_R_z_score" in columns:
-        Cortex_R_z_score_index = columns.get_loc("Cortex_R_z_score")
+        plac_m_max_thick_index = -1
+        print('plac_m_max_thick NOT AVAILABLE')
+        
+    if "brain_t2s_rr_z_score" in columns:
+        brain_t2s_rr_z_score_index = columns.get_loc("brain_t2s_rr_z_score")
     else:
-        Cortex_R_z_score_index = -1
-        print('Cortex_R_z_score NOT AVAILABLE')
-
-    if "WM_L_z_score" in columns:
-        WM_L_z_score_index = columns.get_loc("WM_L_z_score")
-    else:
-        WM_L_z_score_index = -1
-        print('WM_L_z_score NOT AVAILABLE')
-
-    if "WM_R_z_score" in columns:
-        WM_R_z_score_index = columns.get_loc("WM_R_z_score")
-    else:
-        WM_R_z_score_index = -1
-        print('WM_R_z_score NOT AVAILABLE')
-
-    if "Lat_ventricle_L_z_score" in columns:
-        Lat_ventricle_L_z_score_index = columns.get_loc("Lat_ventricle_L_z_score")
-    else:
-        Lat_ventricle_L_z_score_index = -1
-        print('Lat_ventricle_L_z_score NOT AVAILABLE')
-
-    if "Lat_ventricle_R_z_score" in columns:
-        Lat_ventricle_R_z_score_index = columns.get_loc("Lat_ventricle_R_z_score")
-    else:
-        Lat_ventricle_R_z_score_index = -1
-        print('Lat_ventricle_R_z_score NOT AVAILABLE')
-
-    if "CSP_z_score" in columns:
-        CSP_z_score_index = columns.get_loc("CSP_z_score")
-    else:
-        CSP_z_score_index = -1
-        print('CSP_z_score NOT AVAILABLE')
-
-    if "Brainstem_z_score" in columns:
-        Brainstem_z_score_index = columns.get_loc("Brainstem_z_score")
-    else:
-        Brainstem_z_score_index = -1
-        print('Brainstem_z_score NOT AVAILABLE')
-
-    if "Cerebellum_L_z_score" in columns:
-        Cerebellum_L_z_score_index = columns.get_loc("Cerebellum_L_z_score")
-    else:
-        Cerebellum_L_z_score_index = -1
-        print('Cerebellum_L_z_score NOT AVAILABLE')
-
-    if "Cerebellum_R_z_score" in columns:
-        Cerebellum_R_z_score_index = columns.get_loc("Cerebellum_R_z_score")
-    else:
-        Cerebellum_R_z_score_index = -1
-        print('Cerebellum_R_z_score NOT AVAILABLE')
-
-    if "Vermis_z_score" in columns:
-        Vermis_z_score_index = columns.get_loc("Vermis_z_score")
-    else:
-        Vermis_z_score_index = -1
-        print('Vermis_z_score NOT AVAILABLE')
-
-    if "Lentiform_L_z_score" in columns:
-        Lentiform_L_z_score_index = columns.get_loc("Lentiform_L_z_score")
-    else:
-        Lentiform_L_z_score_index = -1
-        print('Lentiform_L_z_score NOT AVAILABLE')
-
-    if "Lentiform_R_z_score" in columns:
-        Lentiform_R_z_score_index = columns.get_loc("Lentiform_R_z_score")
-    else:
-        Lentiform_R_z_score_index = -1
-        print('Lentiform_R_z_score NOT AVAILABLE')
-
-    if "Thalamus_L_z_score" in columns:
-        Thalamus_L_z_score_index = columns.get_loc("Thalamus_L_z_score")
-    else:
-        Thalamus_L_z_score_index = -1
-        print('Thalamus_L_z_score NOT AVAILABLE')
-
-    if "Thalamus_R_z_score" in columns:
-        Thalamus_R_z_score_index = columns.get_loc("Thalamus_R_z_score")
-    else:
-        Thalamus_R_z_score_index = -1
-        print('Thalamus_R_z_score NOT AVAILABLE')
-
-    if "Third_ventricle_z_score" in columns:
-        Third_ventricle_z_score_index = columns.get_loc("Third_ventricle_z_score")
-    else:
-        Third_ventricle_z_score_index = -1
-        print('Third_ventricle_z_score NOT AVAILABLE')
-
-    if "tag_vol_t2w_complete_z_score" in columns:
-        tag_vol_t2w_complete_z_score_index = columns.get_loc("tag_vol_t2w_complete_z_score")
-    else:
-        tag_vol_t2w_complete_z_score_index = -1
-        print('tag_vol_t2w_complete_z_score NOT AVAILABLE')
-
-    if "tag_gu_ac_z_score_gu" in columns:
-        tag_gu_ac_z_score_gu_index = columns.get_loc("tag_gu_ac_z_score_gu")
-    else:
-        tag_gu_ac_z_score_gu_index = -1
-        print('tag_gu_ac_z_score_gu NOT AVAILABLE')
-
-    if "tag_gu_bpd_z_score_gu" in columns:
-        tag_gu_bpd_z_score_gu_index = columns.get_loc("tag_gu_bpd_z_score_gu")
-    else:
-        tag_gu_bpd_z_score_gu_index = -1
-        print('tag_gu_bpd_z_score_gu NOT AVAILABLE')
-
-    if "tag_gu_fl_z_score_gu" in columns:
-        tag_gu_fl_z_score_gu_index = columns.get_loc("tag_gu_fl_z_score_gu")
-    else:
-        tag_gu_fl_z_score_gu_index = -1
-        print('tag_gu_fl_z_score_gu NOT AVAILABLE')
-
-    if "tag_gu_hc_z_score_gu" in columns:
-        tag_gu_hc_z_score_gu_index = columns.get_loc("tag_gu_hc_z_score_gu")
-    else:
-        tag_gu_hc_z_score_gu_index = -1
-        print('tag_gu_hc_z_score_gu NOT AVAILABLE')
-
-    if "tag_gu_pi_z_score_gu" in columns:
-        tag_gu_pi_z_score_gu_index = columns.get_loc("tag_gu_pi_z_score_gu")
-    else:
-        tag_gu_pi_z_score_gu_index = -1
-        print('tag_gu_pi_z_score_gu NOT AVAILABLE')
-
-    if "tag_gu_efw_z_score_gu" in columns:
-        tag_gu_efw_z_score_gu_index = columns.get_loc("tag_gu_efw_z_score_gu")
-    else:
-        tag_gu_efw_z_score_gu_index = -1
-        print('tag_gu_efw_z_score_gu NOT AVAILABLE')
-
-    if "tag_gu_edf_z_score_gu" in columns:
-        tag_gu_edf_z_score_gu_index = columns.get_loc("tag_gu_edf_z_score_gu")
-    else:
-        tag_gu_edf_z_score_gu_index = -1
-        print('tag_gu_edf_z_score_gu NOT AVAILABLE')
-
+        brain_t2s_rr_z_score_index = -1
+        print('brain_t2s_rr_z_score NOT AVAILABLE')
+        
     if "tag_age" in columns:
         tag_age_index = columns.get_loc("tag_age")
     else:
@@ -880,6 +783,13 @@ def perform_imputation(dataframe):
     else:
         tag_anom_loc_index = -1
         print('tag_anom_loc NOT AVAILABLE')
+        
+    if "tag_gu_loc" in columns:
+        tag_gu_loc_index = columns.get_loc("tag_gu_loc")
+    else:
+        tag_gu_loc_index = -1
+        print('tag_gu_loc NOT AVAILABLE')
+        
 
     if "tag_anom_cord" in columns:
         tag_anom_cord_index = columns.get_loc("tag_anom_cord")
@@ -892,6 +802,12 @@ def perform_imputation(dataframe):
     else:
         tag_ivf_index = -1
         print('tag_ivf NOT AVAILABLE')
+        
+    if "tag_cptr" in columns:
+        tag_cptr_index = columns.get_loc("tag_cptr")
+    else:
+        tag_cptr_index = -1
+        print('tag_cptr NOT AVAILABLE')
 
     if "tag_smok" in columns:
         tag_smok_index = columns.get_loc("tag_smok")
@@ -904,37 +820,13 @@ def perform_imputation(dataframe):
     else:
         tag_prev_ptb_index = -1
         print('tag_prev_ptb NOT AVAILABLE')
-
-    if "tag_gu_efw_cen" in columns:
-        tag_gu_efw_cen_index = columns.get_loc("tag_gu_efw_cen")
+        
+    if "tag_bmi_scan" in columns:
+        tag_bmi_scan_index = columns.get_loc("tag_bmi_scan")
     else:
-        tag_gu_efw_cen_index = -1
-        print('tag_gu_efw_cen NOT AVAILABLE')
-
-    if "tag_gu_loc" in columns:
-        tag_gu_loc_index = columns.get_loc("tag_gu_loc")
-    else:
-        tag_gu_loc_index = -1
-        print('tag_gu_loc NOT AVAILABLE')
-
-    if "tag_bp_sys" in columns:
-        tag_bp_sys_index = columns.get_loc("tag_bp_sys")
-    else:
-        tag_bp_sys_index = -1
-        print('tag_bp_sys NOT AVAILABLE')
-
-    if "tag_bp_dias" in columns:
-        tag_bp_dias_index = columns.get_loc("tag_bp_dias")
-    else:
-        tag_bp_dias_index = -1
-        print('tag_bp_dias NOT AVAILABLE')
-
-    if "tag_bp_hr" in columns:
-        tag_bp_hr_index = columns.get_loc("tag_bp_hr")
-    else:
-        tag_bp_hr_index = -1
-        print('tag_bp_hr NOT AVAILABLE')
-
+        tag_bmi_scan_index = -1
+        print('tag_bmi_scan NOT AVAILABLE')
+        
     if "tag_anom_ac_z_score_anom" in columns:
         tag_anom_ac_z_score_anom_index = columns.get_loc("tag_anom_ac_z_score_anom")
     else:
@@ -952,13 +844,36 @@ def perform_imputation(dataframe):
     else:
         tag_anom_fl_z_score_anom_index = -1
         print('tag_anom_fl_z_score_anom NOT AVAILABLE')
-
-
+        
     if "tag_anom_hc_z_score_anom" in columns:
         tag_anom_hc_z_score_anom_index = columns.get_loc("tag_anom_hc_z_score_anom")
     else:
         tag_anom_hc_z_score_anom_index = -1
         print('tag_anom_hc_z_score_anom NOT AVAILABLE')
+
+    if "tag_gu_hc_z_score_gu" in columns:
+        tag_gu_hc_z_score_gu_index = columns.get_loc("tag_gu_hc_z_score_gu")
+    else:
+        tag_gu_hc_z_score_gu_index = -1
+        print('tag_gu_hc_z_score_gu NOT AVAILABLE')
+        
+    if "tag_gu_ac_z_score_gu" in columns:
+        tag_gu_ac_z_score_gu_index = columns.get_loc("tag_gu_ac_z_score_gu")
+    else:
+        tag_gu_ac_z_score_gu_index = -1
+        print('tag_gu_ac_z_score_gu NOT AVAILABLE')
+
+    if "tag_gu_bpd_z_score_gu" in columns:
+        tag_gu_bpd_z_score_gu_index = columns.get_loc("tag_gu_bpd_z_score_gu")
+    else:
+        tag_gu_bpd_z_score_gu_index = -1
+        print('tag_gu_bpd_z_score_gu NOT AVAILABLE')
+
+    if "tag_gu_fl_z_score_gu" in columns:
+        tag_gu_fl_z_score_gu_index = columns.get_loc("tag_gu_fl_z_score_gu")
+    else:
+        tag_gu_fl_z_score_gu_index = -1
+        print('tag_gu_fl_z_score_gu NOT AVAILABLE')
 
 
     #THESE ONES WON'T BE IMPUTED BUT ADDED LATER
@@ -1003,34 +918,13 @@ def perform_imputation(dataframe):
                                                   i == brain_t2s_skew_z_score_index or
                                                   i == brain_t2s_vol_z_score_index or
                                                   i == tag_cervix_length_z_score_index or
-                                                  i == tag_vol_body_z_score_index or
-                                                  i == tag_cptr_z_score_index or
-                                                  i == eCSF_L_z_score_index or
-                                                  i == eCSF_R_z_score_index or
-                                                  i == Cortex_L_z_score_index or
-                                                  i == Cortex_R_z_score_index or
-                                                  i == WM_L_z_score_index or
-                                                  i == WM_R_z_score_index or
-                                                  i == Lat_ventricle_L_z_score_index or
-                                                  i == Lat_ventricle_R_z_score_index or
-                                                  i == CSP_z_score_index or
-                                                  i == Brainstem_z_score_index or
-                                                  i == Cerebellum_L_z_score_index or
-                                                  i == Cerebellum_R_z_score_index or
-                                                  i == Vermis_z_score_index or
-                                                  i == Lentiform_L_z_score_index or
-                                                  i == Lentiform_R_z_score_index or
-                                                  i == Thalamus_L_z_score_index or
-                                                  i == Thalamus_R_z_score_index or
-                                                  i == Third_ventricle_z_score_index or
-                                                  i == tag_vol_t2w_complete_z_score_index or
-                                                  i == tag_gu_ac_z_score_gu_index or
-                                                  i == tag_gu_bpd_z_score_gu_index or
-                                                  i == tag_gu_fl_z_score_gu_index or
-                                                  i == tag_gu_hc_z_score_gu_index or
-                                                  i == tag_gu_pi_z_score_gu_index or
-                                                  i == tag_gu_efw_z_score_gu_index or
-                                                  i == tag_gu_edf_z_score_gu_index or
+                                                  i == tag_cptr_index or
+                                                  i == plac_t2s_rr_z_score_index or
+                                                  i == plac_m_dist_mean_index or
+                                                  i == plac_m_dist_stdev_index or
+                                                  i == plac_m_uni_index or
+                                                  i == plac_m_max_thick_index or
+                                                  i == brain_t2s_rr_z_score_index or
                                                   i == tag_age_index or
                                                   i == tag_bmi_index or
                                                   i == tag_loc_index or
@@ -1038,19 +932,24 @@ def perform_imputation(dataframe):
                                                   i == tag_parity_index or
                                                   i == tag_diabetes_index or
                                                   i == tag_anom_loc_index or
+                                                  i == tag_gu_loc_index or
                                                   i == tag_anom_cord_index or
                                                   i == tag_ivf_index or
                                                   i == tag_smok_index or
                                                   i == tag_prev_ptb_index or
-                                                  i == tag_gu_efw_cen_index or
-                                                  i == tag_gu_loc_index or
-                                                  i == tag_bp_sys_index or
-                                                  i == tag_bp_dias_index or
-                                                  i == tag_bp_hr_index or
+                                                  i == tag_bmi_scan_index or     
                                                   i == tag_anom_ac_z_score_anom_index or
                                                   i == tag_anom_bpd_z_score_anom_index or
                                                   i == tag_anom_fl_z_score_anom_index or
-                                                  i == tag_anom_hc_z_score_anom_index)]
+                                                  i == tag_anom_hc_z_score_anom_index or
+                                                  i == tag_gu_ac_z_score_gu_index or
+                                                  i == tag_gu_bpd_z_score_gu_index or
+                                                  i == tag_gu_fl_z_score_gu_index or
+                                                  i == tag_gu_hc_z_score_gu_index)]
+
+
+
+
 
     X = all_data[:, ix] # Features are all rows of relevant columns
     y = all_data[:, tag_gadel_index] # Labels are GA at delivery
@@ -1058,7 +957,7 @@ def perform_imputation(dataframe):
     # define imputer, can be changed accordingly for other experiments
     imputer = IterativeImputer(estimator=KNeighborsRegressor(weights='distance'),
                                initial_strategy='mean',
-                               max_iter=10, random_state=1,
+                               max_iter=10, random_state=1, tol = 0.00001,
                                verbose=11)
     # fit on the dataset
     Xtrans = imputer.fit_transform(X)
@@ -1133,7 +1032,6 @@ def get_processed_data():
 
 
 
-prueba = get_processed_data()
 
 
 def get_missing_data_info(print_missing=False):
@@ -1164,6 +1062,21 @@ def get_missing_data_info(print_missing=False):
     return missing_values_info
 
 
+
+
+################################################################
+##################################################################
+#################################################################
+#UP UNTIL HERE WE HAVE THE DATA WITH Z-SCORES AND IMPUTATION
+###################################################################
+###################################################################
+###################################################################
+
+
+
+
+
+
 def get_feature_importances(data):
     # generate dataset
     X = data[ALL_FEATURE_NAMES]
@@ -1184,6 +1097,22 @@ def get_feature_importances(data):
     return {k: v for k, v in sorted(feature_with_scores.items(), key=lambda item: item[1], reverse=True)}
 
 
+
+
+#prueba = get_processed_data()
+
+#dict_feat_importances = get_feature_importances(prueba)
+
+#print(dict_feat_importances)
+
+#print(dict_feat_importances.values())
+
+#print(dict_feat_importances.keys())
+
+#print(list(dict_feat_importances.keys()))
+
+        
+
 def get_k_best_labels_features(data, k):
     return [i[0] for i in list(feature_importances.items())[:k]]
 
@@ -1193,18 +1122,19 @@ def get_k_best_feature_labels_by_importances(feature_importances, k):
 
 
 
-feature_importances = get_feature_importances(prueba)
-selected_feature_labels = get_k_best_feature_labels_by_importances(
+#feature_importances = get_feature_importances(prueba)
+#selected_feature_labels = get_k_best_feature_labels_by_importances(
     feature_importances, 10
-)
-selected_features = prueba[selected_feature_labels]
+#)
+
+#selected_features = prueba[selected_feature_labels]
 
 
 
 
 
 def get_svr_model():
-    model = Pipeline([("svr", SVR(max_iter=1000000))])
+    model = Pipeline([("svr", SVR(max_iter=1000))]) ###used to be 1000000, 10000 took too long to run
     parameters = {'svr__C': [0.001, 0.01, 0.1, 1, 10, 100, 1000],
                   'svr__gamma':['scale', 'auto'],
                   'svr__kernel': ['rbf', 'poly', 'sigmoid', 'linear'],
@@ -1229,32 +1159,60 @@ def get_xg_model():
     return (model, parameters, 'XG model')
 
 
-def get_stats_per_model(X, labels, model_pipeline, model_parameters, stratification_type, random_state, cv_folds):
+
+
+
+
+#########################################################################
+#########################################################################
+#ACTUAL TRAINING FUNCTIONS START HERE
+#########################################################################
+#########################################################################
+
+
+def get_stats_per_model(X_train, X_val, X_test, labels_train, labels_val, labels_test, model_pipeline, model_parameters, stratification_type, random_state, cv_folds):
     "Function to train a single model and validate"
-    X = X.to_numpy()
-    X_shape_two_tenths = 2*int(np.ceil(X.shape[0]/10))
-    if (stratification_type is not False):
-        X_train, X_val_test, y_train, y_val_test, strat_train, strat_val_test = train_test_split(X, labels, stratification_type, test_size = X_shape_two_tenths, stratify=stratification_type, random_state = random_state )
-    else:
-        X_train, X_val_test, y_train, y_val_test = train_test_split(X, labels, test_size = X_shape_two_tenths, random_state = random_state )
+    "X_train, etc for this function are already the subdatasets"
+    "With the desired selected features"
+    X_train = X_train.to_numpy()
+    X_val = X_val.to_numpy()
+    X_test = X_test.to_numpy()
+    
+        
+    y_train = labels_train
+    y_val = labels_val
+    y_test = labels_test
+    
+    
+    y_train_4cat = np.copy(y_train)
 
-    y_train_binary = np.copy(y_train)
+    y_train_4cat[y_train_4cat < 28] = 3
+    y_train_4cat[np.logical_and(28 <= y_train_4cat, y_train_4cat < 32)] = 2
+    y_train_4cat[np.logical_and(32 <= y_train_4cat, y_train_4cat < 37)] = 1
+    y_train_4cat[y_train_4cat >= 37] = 0
+    
+    
+    
+    X_train_ext_preterm = X_train[y_train_4cat==3, :]
+    y_train_ext_preterm = y_train[y_train_4cat==3]
+    
+    X_train_very_preterm = X_train[y_train_4cat==2, :]
+    y_train_very_preterm = y_train[y_train_4cat==2]
 
-    y_train_binary[y_train_binary < 37] = 1
-    y_train_binary[y_train_binary >= 37] = 0
+    X_train_late_preterm = X_train[y_train_4cat==1, :]
+    y_train_late_preterm = y_train[y_train_4cat==1]
 
-
-    X_train_preterm = X_train[y_train_binary==1, :]
-    y_train_preterm = y_train[y_train_binary==1]
-
-    X_train_term = X_train[y_train_binary==0, :]
-    y_train_term = y_train[y_train_binary==0]
+    X_train_term = X_train[y_train_4cat==0, :]
+    y_train_term = y_train[y_train_4cat==0]
 
     #Upsampling step
-    X_train_preterm_resam, y_train_preterm_resam  = resample(X_train_preterm, y_train_preterm, n_samples=X_train_term.shape[0], random_state=1)
-
-    X_train_upsampled = np.concatenate((X_train_term, X_train_preterm_resam), axis=0)
-    y_train_upsampled = np.concatenate((y_train_term, y_train_preterm_resam), axis=0)
+    X_train_late_preterm_resam, y_train_late_preterm_resam  = resample(X_train_late_preterm, y_train_late_preterm, n_samples=X_train_term.shape[0], random_state=1)
+    X_train_very_preterm_resam, y_train_very_preterm_resam  = resample(X_train_very_preterm, y_train_very_preterm, n_samples=X_train_term.shape[0], random_state=1)
+    X_train_ext_preterm_resam, y_train_ext_preterm_resam  = resample(X_train_ext_preterm, y_train_ext_preterm, n_samples=X_train_term.shape[0], random_state=1)
+    
+    
+    X_train_upsampled = np.concatenate((X_train_term, X_train_late_preterm_resam, X_train_very_preterm_resam, X_train_ext_preterm_resam), axis=0)
+    y_train_upsampled = np.concatenate((y_train_term, y_train_late_preterm_resam, y_train_very_preterm_resam, y_train_ext_preterm_resam), axis=0)
     y_train_upsampled = np.reshape(y_train_upsampled, (-1, 1))
 
     X_and_y_train_upsampled = np.concatenate((X_train_upsampled, y_train_upsampled), axis=1)
@@ -1267,12 +1225,8 @@ def get_stats_per_model(X, labels, model_pipeline, model_parameters, stratificat
     y_train_upsampled = X_and_y_train_upsampled[:, -1]
 
 
-    if (stratification_type is not False):
-        X_val, X_test, y_val, y_test = train_test_split(X_val_test, y_val_test, test_size = 0.5, stratify=strat_val_test, random_state = random_state )
-    else:
-        X_val, X_test, y_val, y_test = train_test_split(X_val_test, y_val_test, test_size = 0.5, random_state = random_state )
 
-    grid_search = GridSearchCV(model_pipeline, model_parameters, cv = cv_folds, refit = 'r2', scoring = ['r2', 'neg_mean_absolute_error'], verbose = 11, n_jobs=-1)
+    grid_search = GridSearchCV(model_pipeline, model_parameters, cv = cv_folds, refit = 'r2', scoring = ['r2', 'neg_mean_absolute_error'], verbose = 0, n_jobs=-1)
 
     scaler = StandardScaler()
 
@@ -1327,7 +1281,81 @@ def get_stats_per_model(X, labels, model_pipeline, model_parameters, stratificat
 
     return r2_val, mean_error_val, r2_test, mean_error_test, r2_train_cv, mean_error_train_cv, best_model_params, y_pred_train, y_pred_val, y_pred_test, y_train, y_true_val, y_true_test
 
-output_file_path = "/output/path/"
+output_file_path = "/home/localdf21/Documents/Kings/PhD/MResProjectAndFirstPaper/Revision__NewData_4catup_MRes_Project_Upsampled_XG_Acc_No37"
+
+
+
+def execute_calculation(X_train, 
+                        X_val, 
+                        X_test, 
+                        labels_train, 
+                        labels_val, 
+                        labels_test,
+                        combination,
+                        model,
+                        model_parameters,
+                        model_description,
+                        stratification,
+                        stratification_description,
+                        random_state,
+                        cv_folds,
+                        f):
+
+    "Function to evaluate trained base models on test set"
+
+    features_comb = data[list(combination)]
+    
+    #TODO: Make X_train, etc the desired subdataframes with features 
+    #given by combination
+    
+    X_train = X_train[list(combination)]
+    X_val = X_val[list(combination)]
+    X_test = X_test[list(combination)]
+    
+    
+
+    (r2_val, mean_error_val, r2_test, mean_error_test, r2_train_cv, mean_error_train_cv, best_model_params, y_pred_train, y_pred_val, y_pred_test, y_train, y_true_val, y_true_test) = get_stats_per_model(
+        X_train, 
+        X_val, 
+        X_test, 
+        labels_train, 
+        labels_val, 
+        labels_test,
+        model,
+        model_parameters,
+        stratification,
+        random_state,
+        cv_folds)
+
+
+    y_true_test_binary = np.copy(y_true_test)
+    y_pred_test_binary = np.copy(y_pred_test)
+
+    y_true_test_binary[y_true_test_binary < 37] = 1
+    y_true_test_binary[y_true_test_binary >= 37] = 0
+
+    y_pred_test_binary[y_pred_test_binary < 37] = 1
+    y_pred_test_binary[y_pred_test_binary >= 37] = 0
+
+
+    acc_test = accuracy_score(y_true_test_binary, y_pred_test_binary)
+    sen_test = recall_score(y_true_test_binary, y_pred_test_binary)
+    spe_test = recall_score(y_true_test_binary, y_pred_test_binary, pos_label = 0)
+
+    acc_test = round(acc_test, 2)
+    sen_test = round(sen_test, 2)
+    spe_test = round(spe_test, 2)
+
+
+
+    result = '\t'.join([str(model_description), str(best_model_params), str(combination), str(stratification_description), str(cv_folds), str(random_state), str(r2_val), str(mean_error_val), str(r2_test), str(mean_error_test), str(acc_test), str(sen_test), str(spe_test), str(r2_train_cv), str(mean_error_train_cv)])
+
+    f.write(result + '\n')
+    f.flush()
+    return r2_val, y_pred_train, y_pred_val, y_pred_test, y_train, y_true_val, y_true_test
+
+
+
 
 # Stratification
 labels_binary_classification = get_data()['ga_delivery_binary_category'].to_numpy()
@@ -1340,7 +1368,50 @@ warnings.filterwarnings('ignore')
 stratification_variations = [(labels_binary_classification, 'binary_cat')]
 
 
-def try_different_combinations(feature_labels,
+#best_y_pred_meta_val, best_y_pred_meta_test = try_different_combinations(
+#    (
+#        'tag_cervix_length_z_score',
+#        'plac_t2s_mean_z_score',
+#        'tag_gu_edf_z_score_gu',
+#        'tag_cptr_z_score',
+#        'tag_anom_bpd_z_score_anom',
+#        'plac_t2s_kurt_z_score',
+#        'tag_anom_hc_z_score_anom',
+#        'brain_t2s_kurt_z_score',
+#        'tag_gu_efw_z_score_gu',
+#        'brain_t2s_vol_z_score'
+#    ),
+#    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+#    [203, 101, 14],
+#    True,
+#    True
+#)
+
+
+def evaluation(y, y_pred):
+
+    # accuracy
+    acc = accuracy_score(y, y_pred)
+    print('accuracy: ', round(acc,2))
+    # default is sensitivity: pos_label = 1
+    sensitivity = recall_score(y,y_pred)
+    print('sensitivity: ',round(sensitivity,2))
+    # pos_label = 0 gives specificity
+    specificity = recall_score(y,y_pred,pos_label = 0)
+    print('specificity: ',round(specificity,2))
+    
+    return acc, sensitivity, specificity
+
+
+
+
+def try_different_combinations(X_train_cv, 
+                               X_val_cv, 
+                               X_test_cv, 
+                               labels_train_cv, 
+                               labels_val_cv, 
+                               labels_test_cv, 
+                               feature_labels,
                                nr_of_features_to_try,
                                list_number_features_for_meta,
                                meta_lr = False,
@@ -1355,24 +1426,34 @@ def try_different_combinations(feature_labels,
 
     # Create the time-stamped file for when the function is run
     time_str = strftime("%Y-%m-%d %H:%M:%S", gmtime())
-    f = open(output_file_path + '/resultsML_'+ time_str +'.tsv', 'w+')
+    f = open(output_file_path + '/10FOLD__resultsML_'+ time_str +'.tsv', 'w+')
 
     models = [get_rf_model(), get_svr_model(), get_xg_model()] # Add models to be tested
 
-    data = get_processed_data()
-    labels = data['tag_gadel'].values.reshape(-1, 1)
-    labels = labels.ravel()
+    #data = get_processed_data()
+    #labels = data['tag_gadel'].values.reshape(-1, 1)
+    #labels = labels.ravel()
 
 
     headers = ['Model', 'Parameters', 'Combination', 'Stratified', 'CV folds', 'Random state', 'R-score Val', 'Mean error Val', 'R-score Test', 'Mean error Test', 'Acc Test', 'Sen Test', 'Spe Test', 'R-score TrainCV', 'Mean error TrainCV']
     header_row = '\t'.join(headers) + '\n'
     f.write(header_row)
-
-
-
-    predictions_matrix_train = np.zeros((np.shape(data)[0]-2*int(np.ceil(data.shape[0]/10)), len(stratification_variations)*len(models)*(2**(len(nr_of_features_to_try))-1)))
-    predictions_matrix_val = np.zeros((int(np.ceil(data.shape[0]/10)), len(stratification_variations)*len(models)*(2**(len(nr_of_features_to_try))-1)))
-    predictions_matrix_test = np.zeros((int(np.ceil(data.shape[0]/10)), len(stratification_variations)*len(models)*(2**(len(nr_of_features_to_try))-1)))
+        
+    #np.zeros((np.shape(X_train_cv)[0], 
+    #          len(stratification_variations)*
+    #          len(models)*
+    #          (2**(len(nr_of_features_to_try))-1)))
+    
+    length_train = np.shape(X_train_cv)[0]
+    length_val = np.shape(X_val_cv)[0]
+    length_test = np.shape(X_test_cv)[0]
+    
+    nr_models_trained = len(stratification_variations)*len(models)*(2**(len(nr_of_features_to_try))-1)
+    
+    
+    predictions_matrix_train = np.zeros((length_train, nr_models_trained))
+    predictions_matrix_val = np.zeros((length_val, nr_models_trained))
+    predictions_matrix_test = np.zeros((length_test, nr_models_trained))
     #print('Shape train: ', predictions_matrix_train.shape)
     #print('Shape val: ', predictions_matrix_val.shape)
 
@@ -1394,18 +1475,21 @@ def try_different_combinations(feature_labels,
                     for nr_of_features in nr_of_features_to_try:
                         combinations = list(itertools.combinations(feature_labels, nr_of_features))
                         for i, combination in enumerate(combinations):
-                            r2_val, y_pred_train, y_pred_val, y_pred_test, y_train, y_true_val, y_true_test = execute_calculation(data,
-                                                                                                                          combination,
-                                                                                                                          labels,
-                                                                                                                          model[0],
-                                                                                                                          model[1],
-                                                                                                                          model[2],
-                                                                                                                          stratification,
-                                                                                                                          stratification_description,
-                                                                                                                          random_state,
-                                                                                                                          cv_folds,
-                                                                                                                          #weights,
-                                                                                                                         f)
+                            r2_val, y_pred_train, y_pred_val, y_pred_test, y_train, y_true_val, y_true_test = execute_calculation(X_train_cv, 
+                                                                                                                                  X_val_cv, 
+                                                                                                                                  X_test_cv, 
+                                                                                                                                  labels_train_cv, 
+                                                                                                                                  labels_val_cv, 
+                                                                                                                                  labels_test_cv,
+                                                                                                                                  combination,
+                                                                                                                                  model[0],
+                                                                                                                                  model[1],
+                                                                                                                                  model[2],
+                                                                                                                                  stratification,
+                                                                                                                                  stratification_description,
+                                                                                                                                  random_state,
+                                                                                                                                  cv_folds,
+                                                                                                                                  f)
                             for numb_feat in list_number_features_for_meta:
                                 if len(dict_lists_for_each_number_features[str(numb_feat)][1]) < numb_feat:
                                     dict_lists_for_each_number_features[str(numb_feat)][0].append(r2_val)
@@ -1528,43 +1612,14 @@ def try_different_combinations(feature_labels,
         f.write(result + '\n')
         f.flush()
 
+    
 
-
-
-
-    print('Finished!')
-    return best_y_pred_meta_val, best_y_pred_meta_test
-
-
-
-def execute_calculation(data,
-                        combination,
-                        labels,
-                        model,
-                        model_parameters,
-                        model_description,
-                        stratification,
-                        stratification_description,
-                        random_state,
-                        cv_folds,
-                        f):
-
-    "Function to evaluate trained base models on test set"
-
-    features_comb = data[list(combination)]
-
-    (r2_val, mean_error_val, r2_test, mean_error_test, r2_train_cv, mean_error_train_cv, best_model_params, y_pred_train, y_pred_val, y_pred_test, y_train, y_true_val, y_true_test) = get_stats_per_model(
-        features_comb,
-        labels,
-        model,
-        model_parameters,
-        stratification,
-        random_state,
-        cv_folds)
-
-
+    print("Ground truth test", y_true_test)
+    print("Predictions meta-model test", best_y_pred_meta_test)
+    
+    
     y_true_test_binary = np.copy(y_true_test)
-    y_pred_test_binary = np.copy(y_pred_test)
+    y_pred_test_binary = np.copy(best_y_pred_meta_test)
 
     y_true_test_binary[y_true_test_binary < 37] = 1
     y_true_test_binary[y_true_test_binary >= 37] = 0
@@ -1572,43 +1627,152 @@ def execute_calculation(data,
     y_pred_test_binary[y_pred_test_binary < 37] = 1
     y_pred_test_binary[y_pred_test_binary >= 37] = 0
 
-
-    acc_test = accuracy_score(y_true_test_binary, y_pred_test_binary)
-    sen_test = recall_score(y_true_test_binary, y_pred_test_binary)
-    spe_test = recall_score(y_true_test_binary, y_pred_test_binary, pos_label = 0)
-
-    acc_test = round(acc_test, 2)
-    sen_test = round(sen_test, 2)
-    spe_test = round(spe_test, 2)
-
-
-
-    result = '\t'.join([str(model_description), str(best_model_params), str(combination), str(stratification_description), str(cv_folds), str(random_state), str(r2_val), str(mean_error_val), str(r2_test), str(mean_error_test), str(acc_test), str(sen_test), str(spe_test), str(r2_train_cv), str(mean_error_train_cv)])
-
+    
+    
+    print("Binary Evaluation Test Set")
+    acc_test, sensitivity_test, specificity_test = evaluation(y_true_test_binary, y_pred_test_binary)
+    
+    
+    
+    result = '\t'.join(['META RF REGRESSOR CLASS', '.', '.', '.', '.', '.', '.', '.', '.', '.', str(acc_test), str(sensitivity_test), str(specificity_test), '.', '.'])
     f.write(result + '\n')
     f.flush()
-    return r2_val, y_pred_train, y_pred_val, y_pred_test, y_train, y_true_val, y_true_test
+    
+
+    print('Finished!')
+    return best_y_pred_meta_val, best_y_pred_meta_test
 
 
-#Main training function, with the features selected by the feature selection step
-best_y_pred_meta_val, best_y_pred_meta_test = try_different_combinations(
-    (
-        'tag_cervix_length_z_score',
-        'plac_t2s_mean_z_score',
-        'tag_gu_edf_z_score_gu',
-        'tag_cptr_z_score',
-        'tag_anom_bpd_z_score_anom',
-        'plac_t2s_kurt_z_score',
-        'tag_anom_hc_z_score_anom',
-        'brain_t2s_kurt_z_score',
-        'tag_gu_efw_z_score_gu',
-        'brain_t2s_vol_z_score'
-    ),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-    [203, 101, 14],
-    True,
-    True
-)
+
+
+#data = get_processed_data()
+#labels = data['tag_gadel'].values.reshape(-1, 1)
+#labels = labels.ravel()
+
+#labels_binary_classification = get_data()['ga_delivery_binary_category'].to_numpy()
+#labels_4_cat = get_data()['ga_delivery_4_category'].to_numpy()
+
+
+#skf = StratifiedKFold(n_splits=5)
+#indices = skf.split(data, labels_4_cat)
+#for i, (indices_trainval, indices_test) in enumerate(indices):
+#    print('ITERATION NUMBER: ', i)
+#    print('Train/Val: ', indices_trainval)
+    #print('Test: ', indices_test)
+    
+#    labels_4_cat_trainval = labels_4_cat[indices_trainval]
+#    indices_train, indices_val = train_test_split(indices_trainval, test_size = 0.25, stratify=labels_4_cat_trainval, random_state=1)
+    
+#    print('Length Train : ', len(indices_train))
+#    print('Val: ', indices_val)
+#    print('Length Val : ', len(indices_val))
+#    print('Test: ', indices_test)
+#    print('Length Val : ', len(indices_test))
+
+###WE CAN USE THE ACTUAL INDICES TO GENERATE THE TRAIN TEST SPLIT
+
+
+
+
+
+#########
+#########
+#CROSSVAL LOOP
+#########
+#########
+
+data = get_processed_data()
+labels = data['tag_gadel'].values.reshape(-1, 1)
+labels = labels.ravel()
+
+labels_binary_classification = get_data()['ga_delivery_binary_category'].to_numpy()
+labels_4_cat = get_data()['ga_delivery_4_category'].to_numpy()
+
+
+skf = StratifiedKFold(n_splits=10)
+indices = skf.split(data, labels_4_cat)
+
+dict_train_val_indices = dict()
+dict_train_indices = dict()
+dict_val_indices = dict()
+dict_test_indices = dict()
+
+
+
+for i, (indices_trainval, indices_test) in enumerate(indices):
+    
+    dict_test_indices['cv_fold_'+str(i)] = list(indices_test)
+    
+    dict_train_val_indices['cv_fold_'+str(i)] = list(indices_trainval)
+    
+    j = (i+9) % 10
+    
+    dict_val_indices['cv_fold_'+str(j)] = list(indices_test)
+    
+#print(dict_val_indices)
+#print(dict_test_indices)
+
+for i in range(10):
+    
+    dict_train_indices['cv_fold_'+str(i)] = [x for x in dict_train_val_indices['cv_fold_'+str(i)] if x not in dict_val_indices['cv_fold_'+str(i)]]
+ 
+
+for i in range(10):
+    
+#for i in range(0,1):
+
+    print('CV NUMBER: ', i)
+    
+    indices_train = dict_train_indices['cv_fold_'+str(i)]
+    indices_val = dict_val_indices['cv_fold_'+str(i)]
+    indices_test = dict_test_indices['cv_fold_'+str(i)]
+    
+    
+    X_train_cv = data.iloc[indices_train] 
+    #print(X_train.shape)
+    X_val_cv = data.iloc[indices_val] 
+    #print(X_val.shape)
+    X_test_cv = data.iloc[indices_test] 
+    #print(X_test.shape)
+    
+    dict_feat_importances = get_feature_importances(X_train_cv)
+
+    selected_features_cv = list(dict_feat_importances.keys())[:10]
+                          
+    print(selected_features_cv)
+    
+    #if i == 4:
+    #    print(X_train)
+    #    print(X_val)
+    #    print(X_test)
+    
+    labels_train_cv = labels[indices_train]  
+    labels_val_cv = labels[indices_val]  
+    labels_test_cv = labels[indices_test] 
+    
+
+
+    try_different_combinations(X_train_cv, 
+                               X_val_cv, 
+                               X_test_cv, 
+                               labels_train_cv, 
+                               labels_val_cv, 
+                               labels_test_cv, 
+                               selected_features_cv,
+                               [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                               [18],
+                               meta_lr = False,
+                               meta_rf = True)
+
+
+time_str = strftime("%Y-%m-%d %H:%M:%S", gmtime())
+
+print(time_str)
+
+
+
+
+
 
 
 def save_fig(fileName, plt):
@@ -1691,24 +1855,6 @@ def plot_data_identity(x_data, y_data, categories_data, category_labels, xlabel,
     save_fig(graph_title, plt)
 
 
-def evaluation(y, y_pred):
-
-    # accuracy
-    acc = accuracy_score(y, y_pred)
-    print('accuracy: ', round(acc,2))
-
-    # default is sensitivity: pos_label = 1
-    sensitivity = recall_score(y,y_pred)
-    print('sensitivity: ',round(sensitivity,2))
-    # pos_label = 0 gives specificity
-    specificity = recall_score(y,y_pred,pos_label = 0)
-    print('specificity: ',round(specificity,2))
-
-
-
-
-
-
 
 def try_from_best_meta_r2(best_y_pred_meta_val, best_y_pred_meta_test):
     "Function to visualise results of best meta-model"
@@ -1776,10 +1922,12 @@ def try_from_best_meta_r2(best_y_pred_meta_val, best_y_pred_meta_test):
     y_pred_test_binary[y_pred_test_binary >= 37] = 0
 
 
-
-    evaluation(y_true_test_binary, y_pred_test_binary)
-
+    print("Evaluation Val Set")
     evaluation(y_true_val_binary, y_pred_val_binary)
+    
+    
+    print("Evaluation Test Set")
+    evaluation(y_true_test_binary, y_pred_test_binary)
 
 
 
@@ -1802,4 +1950,4 @@ def try_from_best_meta_r2(best_y_pred_meta_val, best_y_pred_meta_test):
     return svr_df_test, svr_df_val
 
 
-try_from_best_meta_r2(best_y_pred_meta_val, best_y_pred_meta_test)
+#try_from_best_meta_r2(best_y_pred_meta_val, best_y_pred_meta_test)
